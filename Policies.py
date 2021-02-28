@@ -7,12 +7,13 @@ from matplotlib import pyplot as plt
 tf.keras.backend.set_floatx('float64')
 import os
 
-class DqnAgent(object):
+class DqnNetwork(keras.Model):
+    """
+    Builds the Q-network as a keras model.
+    """
+    def __init__(self, model_param):
+        super(DqnNetwork, self).__init__()
 
-    def init_Q_network(self, model_param):
-        """
-        Builds the Q-network as a keras model.
-        """
         num_inputs = model_param["num_inputs"]
         num_outputs = model_param["num_outputs"]
         num_hidden_1 = model_param["num_neurons"][0]
@@ -24,27 +25,27 @@ class DqnAgent(object):
         dense_layer_1 = layers.Dense(num_hidden_1, activation=af, kernel_initializer="HeUniform")(input_layer)
         dense_layer_2 = layers.Dense(num_hidden_2, activation=af, kernel_initializer="HeUniform")(dense_layer_1)
 
-        value_layer, advantage_layer = layers.Lambda(lambda w: tf.split(w, 2, 1))(dense_layer_2)
+        output_layer = layers.Dense(num_outputs, activation="linear")(dense_layer_2)
 
-        value_layer = layers.Dense(1)(value_layer)
-        advantage_layer = layers.Dense(num_outputs)(advantage_layer)
+        self.model = keras.Model(inputs=input_layer,
+                                 outputs=output_layer,
+                                 name="DQN_basic")
 
-        # Combine streams into Q-Values
-        reduce_mean_layer = layers.Lambda(lambda w: tf.reduce_mean(w, axis=1, keepdims=True))
+        keras.utils.plot_model(self.model, show_shapes=True, show_layer_names=True)
 
-        q_vals_output = layers.Add()([value_layer, layers.Subtract()([advantage_layer, reduce_mean_layer(advantage_layer)])])
+    @tf.function
+    def call(self, inputs: tf.Tensor):
+        """ Returns the output of the model given an input. """
+        y = self.model(inputs)
+        return y
 
-        model = Model(input_layer, q_vals_output)
-        model.compile(model_param["optimiser"], loss=model_param["loss_func"])
 
-        keras.utils.plot_model(model, show_shapes=True, show_layer_names=True)
+class DqnAgent(keras.models.Model):
 
-        return model
-
-    def __init__(self, training_param, model_param, buffer):
-        model = self.init_Q_network(model_param)
+    def __init__(self, model, training_param, model_param, buffer):
+        super(DqnAgent, self).__init__()
         self.training_param = training_param
-        self.replay_buffer = buffer
+        self.buffer = buffer
         self.gamma = training_param["gamma"]
 
         # Replay buffer
@@ -58,8 +59,8 @@ class DqnAgent(object):
         self.eps_evaluation = self.eps_final
 
         # DQN
-        self.DQN = model
-        self.target_dqn = model
+        self.DQN_model = model
+
 
     def calc_epsilon(self, episode, evaluation=False):
         """Get the appropriate epsilon value given the episode
@@ -70,7 +71,7 @@ class DqnAgent(object):
             The appropriate epsilon value
         """
         if evaluation:
-            return self.eps_evaluation
+            return 1
         elif episode == 0:
             return self.eps_initial
         elif episode > 0:
@@ -90,88 +91,35 @@ class DqnAgent(object):
         eps = self.calc_epsilon(episode, evaluation)
 
         # With chance epsilon, take a random action
-        if np.random.rand(1) < eps:
+        if np.random.random() > eps:
             return np.random.randint(0, 2)
-
-        # Otherwise, query the DQN for an action
-        q_vals = self.DQN.predict(state)
-        return q_vals.argmax()
-
-    def update_target_network(self):
-        """Update the target Q network"""
-        self.target_dqn.set_weights(self.DQN.get_weights())
-
-    def add_experience(self, state, action, reward, terminal):
-        """Wrapper function for adding an experience to the Agent's replay buffer"""
-        self.replay_buffer.add_experience(state, action, reward, terminal)
-
-    def learn(self, episode, priority_scale=0.7):
-        """Sample a batch and use it to improve the DQN
-        Arguments:
-            episode: Used for calculating importances
-            priority_scale: How much to weight priorities when sampling the replay buffer. 0 = completely random, 1 = completely based on priority
-        Returns:
-            The loss between the predicted and target Q as a float
-        """
-
-        if self.use_per:
-            (states, actions, rewards, new_states,
-             terminal_flags), importance, indices = self.replay_buffer.get_minibatch(batch_size=self.batch_size,
-                                                                                     priority_scale=priority_scale)
-            importance = importance ** (1 - self.calc_epsilon(episode))
         else:
-            states, actions, rewards, new_states, terminal_flags = self.replay_buffer.get_minibatch(
-                batch_size=self.batch_size, priority_scale=priority_scale)
+            # Otherwise, query the DQN for an action
+            q_vals = self.DQN_model(state)
+            return np.argmax(q_vals, axis=1)[0]
 
-        states = np.squeeze(states)
-        new_states = np.squeeze(new_states)
+    def train_step(self):
+        batch_size = self.training_param["batch_size"]
+        gamma = self.training_param["gamma"]
 
-        # Main DQN estimates best action in new states
-        arg_q_max = self.DQN.predict(new_states).argmax(axis=1)
+        # Sample mini-batch from memory
+        batch = self.buffer.get_training_samples(batch_size)
+        states = tf.squeeze(tf.convert_to_tensor([each[0] for each in batch]))
+        actions = tf.squeeze(tf.convert_to_tensor(np.array([each[1] for each in batch])))
+        rewards = tf.squeeze(tf.convert_to_tensor(np.array([each[2] for each in batch])))
+        next_states = tf.squeeze(tf.convert_to_tensor(np.array([each[3] for each in batch])))
 
-        # Target DQN estimates q-vals for new states
-        future_q_vals = self.target_dqn.predict(new_states)
-        double_q = future_q_vals[range(self.batch_size), arg_q_max]
-
-        # TODO remove terminal flags and set next_state=0 if experience over (terminal) -> Q =0
-        # Calculate targets (bellman equation)
-        target_q = rewards + (self.gamma * double_q * (1 - terminal_flags))
-
-        # Use targets to calculate loss (and use loss to calculate gradients)
         with tf.GradientTape() as tape:
-            q_values = self.DQN(states)
+            target_Q = self.DQN_model(next_states)
+            target_output = rewards + gamma*np.max(target_Q, axis=1)
 
+            predicted_Q = self.DQN_model(states)
             one_hot_actions = tf.keras.utils.to_categorical(actions, 2,
                                                             dtype=np.float32)  # using tf.one_hot causes strange errors
-            Q = tf.reduce_sum(tf.multiply(q_values, one_hot_actions), axis=1)
+            predicted_output = tf.reduce_sum(tf.multiply(predicted_Q, one_hot_actions), axis=1)
 
-            error = Q - target_q
-            loss = self.training_param["loss_func"](target_q, Q)
+            loss_value = self.training_param["loss_func"](target_output, predicted_output)
 
-            if self.use_per:
-                # Multiply the loss by importance, so that the gradient is also scaled.
-                # The importance scale reduces bias against situataions that are sampled
-                # more frequently.
-                loss = tf.reduce_mean(loss * importance)
+            grads = tape.gradient(loss_value, self.DQN_model.trainable_variables)
 
-        model_gradients = tape.gradient(loss, self.DQN.trainable_variables)
-        self.DQN.optimizer.apply_gradients(zip(model_gradients, self.DQN.trainable_variables))
-
-        if self.use_per:
-            self.replay_buffer.set_priorities(indices, error)
-
-        return float(loss.numpy()), error
-
-    def save_weights(self, file_loc):
-        # Save DQN and target DQN
-        self.DQN.save(file_loc)
-        self.target_dqn.save(file_loc)
-
-        # Save replay buffer
-        self.replay_buffer.save(file_loc)
-
-    def load_weights(self, file_loc):
-        # Load DQNs
-        self.DQN = tf.keras.models.load_model(file_loc)
-        self.target_dqn = tf.keras.models.load_model(file_loc)
-
+            self.training_param["optimiser"].apply_gradients(zip(grads, self.DQN_model.trainable_variables))
