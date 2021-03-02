@@ -1,6 +1,7 @@
 from matplotlib import pyplot as plt
 import pandas as pd
 import numpy as np
+import random
 from collections import deque
 
 class TrainingBuffer(object):
@@ -10,8 +11,10 @@ class TrainingBuffer(object):
     the network 'forgets' good actions that it learnt previously.
     """
 
-    def __init__(self, max_mem_size):
+    def __init__(self, max_mem_size, batch_size):
+        self.max_mem_size = max_mem_size
         self.buffer = deque(maxlen=max_mem_size)
+        self.batch_size = batch_size
 
     def add_experience(self, experience):
         """
@@ -19,8 +22,9 @@ class TrainingBuffer(object):
         """
         self.buffer.append(experience)
 
-    def get_training_samples(self, batch_size):
-        index = np.random.choice(np.arange(len(self.buffer)),
-                                 size=batch_size,
-                                 replace=False)
-        return [self.buffer[i] for i in index]
+    def get_training_samples(self):
+        """ Get minibatch for training. """
+        return random.sample(self.buffer, self.batch_size)
+
+    def is_buffer_min_size(self):
+        return len(self.buffer) >= self.batch_size
