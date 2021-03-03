@@ -71,6 +71,7 @@ class DqnAgent(keras.models.Model):
         else:
             if epsilon_decay_count > 1 and self.epsilon > self.eps_final:
                 self.epsilon = self.epsilon*self.decay
+                self.epsilon = 0.3
             return self.epsilon
 
 
@@ -98,18 +99,20 @@ class DqnAgent(keras.models.Model):
         next_states = tf.squeeze(tf.convert_to_tensor(np.array([each[3] for each in mini_batch])))
         done = np.array([each[4] for each in mini_batch])
 
-        with tf.GradientTape() as tape:
-            target_Q = self.DQN_model(next_states)
-            target_output = rewards + (1-done)*(gamma * np.amax(target_Q, axis=1))
+        target_Q = self.DQN_model(next_states)
+        target_output = rewards + (1 - done) * (gamma * np.amax(target_Q, axis=1))
 
+        with tf.GradientTape() as tape:
             predicted_Q = self.DQN_model(states)
             one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
             predicted_output = tf.reduce_sum(tf.multiply(predicted_Q, one_hot_actions), axis=1)
 
-            loss_value = self.training_param["loss_func"](target_output, predicted_output)
+            # loss_value = tf.losses.Huber()(target_output, predicted_output)
+            loss_value = tf.losses.MSE(y_true=target_output, y_pred=predicted_output)
+            # loss_value = tf.reduce_mean(tf.square(target_output, predicted_output))
 
-            grads = tape.gradient(loss_value, self.DQN_model.trainable_variables)
+        grads = tape.gradient(loss_value, self.DQN_model.trainable_variables)
 
-            self.training_param["optimiser"].apply_gradients(zip(grads, self.DQN_model.trainable_variables))
+        self.training_param["optimiser"].apply_gradients(zip(grads, self.DQN_model.trainable_variables))
 
         return loss_value

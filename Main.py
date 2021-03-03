@@ -45,8 +45,8 @@ class Main(object):
             # Loop through all timesteps in each episode:
             for timestep in range(max_timesteps):
 
-                # if episode == 50:
-                #     self.env.render()
+                if episode == 50:
+                    self.env.render()
 
                 action = self.agent.get_action(train_count, state, evaluation=self.evaluation)
                 epsilon_list.append(self.agent.epsilon)
@@ -82,8 +82,8 @@ class Main(object):
 
             # Log details
             if episode % 10 == 0:
-                template = "Running reward: {:.2f} at Episode {}. Loss: {:.2f}"
-                print(template.format(running_reward, episode, mean_loss_list[-1]))
+                template = "Running reward: {:.2f} at Episode {}. Loss: {:.2f}. Epsilon: {:.2f}."
+                print(template.format(running_reward, episode, mean_loss_list[-1], mean_epsilon_list[-1]))
 
             if running_reward >= 1000 or episode == self.agent.training_param["max_num_episodes"]:
                 print("Solved at episode {}!".format(episode))
@@ -130,14 +130,14 @@ if __name__ == "__main__":
         "seed": seed,
         "gamma": 0.95,
         "max_timesteps": 1000,
-        "max_num_episodes": 100,  # Small for checking plots
+        "max_num_episodes": 1000,  # Small for checking plots
         "max_buffer_size": 50000,
         "batch_size": 32,
         "epsilon_max": 1.0,         # Initial epsilon - Exploration
         "epsilon_min": 0.1,        # Final epsilon - Exploitation
-        "decay_rate": 1-10**(-4),
+        "decay_rate": 1-10**(-3.3),
         "optimiser": keras.optimizers.Adam(learning_rate=0.0001),
-        "loss_func": keras.losses.Huber(),
+
     }
 
     # Parameters of the neural network
