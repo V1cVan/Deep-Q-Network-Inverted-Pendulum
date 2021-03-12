@@ -34,7 +34,8 @@ class Main(object):
         max_timesteps = self.agent.training_param["max_timesteps"]
         batch_size = self.agent.training_param["batch_size"]
         train_count = 1
-
+        model_update_counter = 0
+        trained = False
         # Loop through all episodes:
         while True:
             episode_reward = 0
@@ -60,17 +61,23 @@ class Main(object):
                 self.buffer.add_experience((state, action, reward, next_state, done))
                 state = next_state
 
-                if timestep % 1 == 0 and len(self.buffer.buffer) >= batch_size + 1000:
-                    loss_list.append(self.agent.train_step())
-                    train_count += 1  # Used for decreasing epsilon
+                if len(self.buffer.buffer) >= batch_size:
+                    model_update_counter += 1
+                    if model_update_counter % training_param["target_update_rate"] == 0:
+                        self.agent.update_target_net()
+                        # print("Updated target net.")
+                    if model_update_counter % training_param["model_update_rate"] == 0:
+                        batch_reward, loss = self.agent.train_step()
+                        trained = True
+                        loss_list.append(loss)
+                        train_count += 1  # Used for decreasing epsilon
+
 
                 if done:
                     break
 
             # Lists for plotting:
             rewards_history.append(episode_reward)
-            mean_loss_list.append(np.mean(loss_list))
-            loss_list = []
             mean_epsilon_list.append(np.mean(epsilon_list))
             epsilon_list = []
 
@@ -81,22 +88,24 @@ class Main(object):
             episode += 1
 
             # Log details
-            if episode % 10 == 0:
+            if episode % 50 == 0:
                 template = "Running reward: {:.2f} at Episode {}. Loss: {:.2f}. Epsilon: {:.2f}."
-                print(template.format(running_reward, episode, mean_loss_list[-1], mean_epsilon_list[-1]))
+                if trained == True:
+                    print(template.format(running_reward, episode, loss_list[-1], mean_epsilon_list[-1]))
+                    trained == False
 
-            if running_reward >= 1000 or episode == self.agent.training_param["max_num_episodes"]:
+            if running_reward >= 300 or episode == self.agent.training_param["max_num_episodes"]:
                 print("Solved at episode {}!".format(episode))
 
-                # Sum rewards and losses during training:
-                plt.figure(1)
-                plt.plot(np.arange(episode), rewards_history, '.-r')
-                plt.plot(np.arange(episode), mean_loss_list, '.-b')  ## NB beginning nan loss is from mean above. Not training.
-
-                # Plot of epsilon evolution during training:
-                plt.figure(2)
-                plt.plot(np.arange(len(mean_epsilon_list)),mean_epsilon_list, '.-g')
-                plt.show()
+                # # Sum rewards and losses during training:
+                # plt.figure(1)
+                # plt.plot(np.arange(episode), rewards_history, '.-r')
+                # plt.plot(np.arange(episode), mean_loss_list, '.-b')  ## Veginning nan loss is from mean above. Not training.
+                #
+                # # Plot of epsilon evolution during training:
+                # plt.figure(2)
+                # plt.plot(np.arange(len(mean_epsilon_list)),mean_epsilon_list, '.-g')
+                # plt.show()
                 break # break the while (episode loop)
 
     def runSimulation(self, simulated_timesteps):
@@ -121,33 +130,62 @@ class Main(object):
 
 
 if __name__ == "__main__":
-    seed = 42
+    SEED = 42
     env_name = 'CartPole-v1'
     env = gym.make(env_name)
 
-    # Parameters used for training
+    # Training parameters
+    GAMMA = 0.999
+    MAX_TIMESTEPS = 1000
+    MAX_EPISODES = 30000
+    BUFFER_SIZE = 1000000
+    BATCH_SIZE = 32
+    EPSILON_MAX = 1.0
+    EPSILON_MIN = 0.1
+    DECAY_RATE = 0.999998
+    LEARN_RATE = 0.001
+    MODEL_UPDATE_RATE = 50
+    TARGET_UPDATE_RATE = 1000*MODEL_UPDATE_RATE
+    CLIP_GRADIENTS = True
+    CLIP_NORM = 2
+    STANDARDISE_RETURNS = False
+    OPTIMISER = keras.optimizers.Adam(learning_rate=LEARN_RATE)
+    LOSS_FUNC = tf.losses.Huber()
+    USE_PER = False
+
+    # Model parameters
+    NUM_INPUTS = env.observation_space.shape[0]
+    NUM_OUTPUTS = env.action_space.n
+    NUM_NEURONS = [32, 32]
+    AF = "relu"
+    WEIGHTS_FILE_LOC = "./model/model_weights"
+
     training_param = {
-        "seed": seed,
-        "gamma": 0.95,
-        "max_timesteps": 1000,
-        "max_num_episodes": 1000,  # Small for checking plots
-        "max_buffer_size": 50000,
-        "batch_size": 32,
-        "epsilon_max": 1.0,         # Initial epsilon - Exploration
-        "epsilon_min": 0.1,        # Final epsilon - Exploitation
-        "decay_rate": 1-10**(-3.3),
-        "optimiser": keras.optimizers.Adam(learning_rate=0.0001),
-
+        "seed": SEED,
+        "gamma": GAMMA,
+        "max_timesteps": MAX_TIMESTEPS,
+        "max_num_episodes": MAX_EPISODES,  # Small for checking plots
+        "max_buffer_size": BUFFER_SIZE,
+        "batch_size": BATCH_SIZE,
+        "epsilon_max": EPSILON_MAX,         # Initial epsilon - Exploration
+        "epsilon_min": EPSILON_MIN,        # Final epsilon - Exploitation
+        "decay_rate": DECAY_RATE,
+        "optimiser": OPTIMISER,
+        "loss_func": LOSS_FUNC,
+        "model_update_rate": MODEL_UPDATE_RATE,
+        "target_update_rate": TARGET_UPDATE_RATE,
+        "standardise_returns": STANDARDISE_RETURNS,
+        "clip_gradients": CLIP_GRADIENTS,
+        "clip_norm": CLIP_NORM,
+        "use_per": USE_PER
     }
-
-    # Parameters of the neural network
     model_param = {
-        "seed": seed,
-        "num_inputs": 4,
-        "num_outputs": 2,
-        "num_neurons": [50, 50],
-        "af": "relu",
-        "weights_file_loc": "./model/model_weights"
+        "seed": SEED,
+        "num_inputs": NUM_INPUTS,
+        "num_outputs": NUM_OUTPUTS,
+        "num_neurons": NUM_NEURONS,
+        "af": AF,
+        "weights_file_loc": WEIGHTS_FILE_LOC
     }
 
     env.seed(training_param["seed"])
@@ -155,13 +193,15 @@ if __name__ == "__main__":
     np.random.seed(training_param["seed"])
 
     # Create buffer object
-    buffer = TrainingBuffer(training_param["max_buffer_size"], training_param["batch_size"])
+    buffer = TrainingBuffer(max_mem_size=BUFFER_SIZE,
+                            batch_size=BATCH_SIZE,
+                            use_per=USE_PER)
 
     DQN_model = DqnNetwork(model_param)
     DQN_agent = DqnAgent(DQN_model, training_param, model_param, buffer)
 
     # Train
-    main = Main(env, DQN_agent, buffer, evaluation=False)
+    main = Main(env=env, agent=DQN_agent, buffer=buffer, evaluation=False)
     main.train_DQN()
 
     # Simulate

@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import random
 from collections import deque
+import tensorflow as tf
 
 class TrainingBuffer(object):
     """
@@ -11,10 +12,12 @@ class TrainingBuffer(object):
     the network 'forgets' good actions that it learnt previously.
     """
 
-    def __init__(self, max_mem_size, batch_size):
+    def __init__(self, max_mem_size, batch_size, use_per):
+        self.use_per = use_per
         self.max_mem_size = max_mem_size
         self.buffer = deque(maxlen=max_mem_size)
         self.batch_size = batch_size
+        self.priority_scale = 0.7
 
     def add_experience(self, experience):
         """
@@ -23,8 +26,14 @@ class TrainingBuffer(object):
         self.buffer.append(experience)
 
     def get_training_samples(self):
-        """ Get minibatch for training. """
-        return random.sample(self.buffer, self.batch_size)
+        """Returns a minibatch"""
+        mini_batch = random.sample(self.buffer, self.batch_size)
+        states = tf.squeeze(tf.convert_to_tensor([each[0] for each in mini_batch], dtype=np.float32))
+        actions = tf.squeeze(tf.convert_to_tensor(np.array([each[1] for each in mini_batch], dtype=np.float32)))
+        rewards = tf.squeeze(tf.convert_to_tensor(np.array([each[2] for each in mini_batch], dtype=np.float32)))
+        next_states = tf.squeeze(tf.convert_to_tensor(np.array([each[3] for each in mini_batch], dtype=np.float32)))
+        done = tf.cast([each[4] for each in mini_batch], dtype=tf.float32)
+        return states, actions, rewards, next_states, done
 
     def is_buffer_min_size(self):
         return len(self.buffer) >= self.batch_size

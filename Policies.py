@@ -28,14 +28,14 @@ class DqnNetwork(keras.Model):
 
         self.model = keras.Model(inputs=input_layer,
                                  outputs=output_layer,
-                                 name="DQN_basic")
+                                 name="DDQN_basic")
 
         keras.utils.plot_model(self.model, show_shapes=True, show_layer_names=True)
 
     @tf.function
     def call(self, inputs: tf.Tensor):
         """ Returns the output of the model given an input. """
-        y = self.model(inputs)
+        y = tf.cast(self.model(inputs), dtype=tf.dtypes.float32)
         return y
 
 
@@ -56,9 +56,12 @@ class DqnAgent(keras.models.Model):
         self.decay = training_param["decay_rate"]
         self.epsilon = self.eps_initial
 
-        # DQN network
+        # DDQN networks
         self.DQN_model = model
+        self.DQN_target = model
 
+    def update_target_net(self):
+        self.DQN_target.set_weights(self.DQN_model.get_weights())
 
     def calc_epsilon(self, epsilon_decay_count, evaluation=False):
         """ Calculate epsilon based on the training counter in the training loop. """
@@ -70,8 +73,7 @@ class DqnAgent(keras.models.Model):
             return self.epsilon
         else:
             if epsilon_decay_count > 1 and self.epsilon > self.eps_final:
-                self.epsilon = self.epsilon*self.decay
-                self.epsilon = 0.3
+                self.epsilon = self.epsilon * self.decay
             return self.epsilon
 
 
@@ -86,33 +88,57 @@ class DqnAgent(keras.models.Model):
             q_vals = self.DQN_model(state)
             return np.argmax(q_vals, axis=1)[0]
 
-
     def train_step(self):
         """ Training step. """
-        gamma = self.training_param["gamma"]
-
         # Sample mini-batch from memory
-        mini_batch = self.buffer.get_training_samples()
-        states = tf.squeeze(tf.convert_to_tensor([each[0] for each in mini_batch]))
-        actions = tf.squeeze(tf.convert_to_tensor(np.array([each[1] for each in mini_batch])))
-        rewards = tf.squeeze(tf.convert_to_tensor(np.array([each[2] for each in mini_batch])))
-        next_states = tf.squeeze(tf.convert_to_tensor(np.array([each[3] for each in mini_batch])))
-        done = np.array([each[4] for each in mini_batch])
+        states, actions, rewards, next_states, done = self.buffer.get_training_samples()
+        one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
 
-        target_Q = self.DQN_model(next_states)
-        target_output = rewards + (1 - done) * (gamma * np.amax(target_Q, axis=1))
+        batch_reward, loss = self.run_tape(
+            states=states,
+            actions=one_hot_actions,
+            rewards=rewards,
+            next_states=next_states,
+            done=done
+        )
+        return batch_reward, loss
+
+    @tf.function
+    def run_tape(self,
+                 states: tf.Tensor,
+                 actions: tf.Tensor,
+                 rewards: tf.Tensor,
+                 next_states: tf.Tensor,
+                 done: tf.Tensor):
+
+        ones = tf.ones(tf.shape(done), dtype=tf.dtypes.float32)
+
+        target_Q = self.DQN_target(next_states)
+        target_output = rewards + (ones - done) * (self.gamma * tf.reduce_max(target_Q, axis=1))
+
+        # Testing the standardisation of expected returns - Showed significant performance on another repo.
+        if self.training_param["standardise_returns"]:
+            eps = np.finfo(np.float32).eps.item()
+            target_output = target_output - tf.math.reduce_mean(target_output) / (
+                        tf.math.reduce_std(target_output) + eps)
 
         with tf.GradientTape() as tape:
             predicted_Q = self.DQN_model(states)
-            one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
-            predicted_output = tf.reduce_sum(tf.multiply(predicted_Q, one_hot_actions), axis=1)
 
-            # loss_value = tf.losses.Huber()(target_output, predicted_output)
-            loss_value = tf.losses.MSE(y_true=target_output, y_pred=predicted_output)
-            # loss_value = tf.reduce_mean(tf.square(target_output, predicted_output))
+            predicted_output = tf.reduce_sum(tf.multiply(predicted_Q, actions), axis=1)
+
+            loss_value = tf.reduce_mean(tf.square(target_output - predicted_output))
+            # loss_value = self.training_param["loss_func"](target_output, predicted_output)
 
         grads = tape.gradient(loss_value, self.DQN_model.trainable_variables)
+        # Clip gradients
+        if self.training_param["clip_gradients"]:
+            norm = self.training_param["clip_norm"]
+            grads = [tf.clip_by_norm(g, norm)
+                     for g in grads]
 
         self.training_param["optimiser"].apply_gradients(zip(grads, self.DQN_model.trainable_variables))
+        sum_reward = tf.math.reduce_sum(rewards)
+        batch_reward = sum_reward/len(self.buffer.buffer)
 
-        return loss_value
+        return batch_reward, loss_value
