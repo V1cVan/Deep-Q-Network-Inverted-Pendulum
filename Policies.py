@@ -13,7 +13,7 @@ class DqnNetwork(keras.Model):
     """
     def __init__(self, model_param):
         super(DqnNetwork, self).__init__()
-
+        self.model_params = model_param
         num_inputs = model_param["num_inputs"]
         num_outputs = model_param["num_outputs"]
         num_hidden_1 = model_param["num_neurons"][0]
@@ -81,26 +81,72 @@ class DqnAgent(keras.models.Model):
         """ Get action to be passed to the simulator. """
         eps = self.calc_epsilon(epsilon_decay_count, evaluation)
         # With chance epsilon, take a random action
-        if np.random.rand() < eps:
+        if np.random.rand() < eps and evaluation is False:
             return np.random.randint(0, 2)
         else:
             # Otherwise, query the DQN for an action
             q_vals = self.DQN_model(state)
             return np.argmax(q_vals, axis=1)[0]
 
+    def add_experience(self, experience):
+        if self.training_param["use_per"]:
+            # Calculate the TD-error for the Prioritised Replay Buffer
+            states, actions, rewards, next_states, done = experience
+            states = tf.convert_to_tensor(states, dtype=np.float32)
+            actions = tf.squeeze(tf.convert_to_tensor(actions, dtype=np.float32))
+            rewards = tf.squeeze(tf.convert_to_tensor(rewards, dtype=np.float32))
+            next_states = tf.convert_to_tensor(next_states, dtype=np.float32)
+            done = tf.cast(done, dtype=tf.float32)
+            td_error = self.compute_td_error(states=states,
+                                             rewards=rewards,
+                                             next_states=next_states,
+                                             done=done)
+            self.buffer.add_experience(td_error, (states, actions, rewards, next_states, done))
+        else:
+            self.buffer.add_experience(experience)
+
+
+    @tf.function
+    # TODO calculate TD error in the loss
+    def compute_td_error(self,
+                         states: tf.Tensor,
+                         rewards: tf.Tensor,
+                         next_states: tf.Tensor,
+                         done: tf.Tensor ):
+        ones = tf.ones(tf.shape(done), dtype=tf.dtypes.float32)
+        target_Q = self.DQN_target(next_states)
+        target_output = rewards + (ones - done) * (self.gamma * tf.reduce_max(target_Q, axis=1))
+        predicted_Q = self.DQN_model(states)
+        predicted_output = tf.reduce_max(predicted_Q, axis=1)
+        return target_output - predicted_output
+
+
     def train_step(self):
         """ Training step. """
         # Sample mini-batch from memory
-        states, actions, rewards, next_states, done = self.buffer.get_training_samples()
-        one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
+        if self.training_param["use_per"]:
+            # TODO Finish PER
+            states, actions, rewards, next_states, done, idxs, is_weight = self.buffer.get_training_samples()
+            one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
+            batch_reward, loss = self.run_tape(
+                states=states,
+                actions=one_hot_actions,
+                rewards=rewards,
+                next_states=next_states,
+                done=done,
+                is_weight=is_weight
+            )
+        else:
+            states, actions, rewards, next_states, done = self.buffer.get_training_samples()
+            one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
+            batch_reward, loss = self.run_tape(
+                states=states,
+                actions=one_hot_actions,
+                rewards=rewards,
+                next_states=next_states,
+                done=done
+            )
 
-        batch_reward, loss = self.run_tape(
-            states=states,
-            actions=one_hot_actions,
-            rewards=rewards,
-            next_states=next_states,
-            done=done
-        )
         return batch_reward, loss
 
     @tf.function
@@ -109,7 +155,8 @@ class DqnAgent(keras.models.Model):
                  actions: tf.Tensor,
                  rewards: tf.Tensor,
                  next_states: tf.Tensor,
-                 done: tf.Tensor):
+                 done: tf.Tensor,
+                 is_weight: tf.Tensor = None):
 
         ones = tf.ones(tf.shape(done), dtype=tf.dtypes.float32)
 
@@ -127,7 +174,12 @@ class DqnAgent(keras.models.Model):
 
             predicted_output = tf.reduce_sum(tf.multiply(predicted_Q, actions), axis=1)
 
-            loss_value = tf.reduce_mean(tf.square(target_output - predicted_output))
+
+            error = target_output - predicted_output
+            loss_value = tf.reduce_mean(tf.square(error))
+            if is_weight is not None:
+                loss_value = tf.reduce_mean(loss_value * is_weight)
+
             # loss_value = self.training_param["loss_func"](target_output, predicted_output)
 
         grads = tape.gradient(loss_value, self.DQN_model.trainable_variables)
@@ -139,6 +191,6 @@ class DqnAgent(keras.models.Model):
 
         self.training_param["optimiser"].apply_gradients(zip(grads, self.DQN_model.trainable_variables))
         sum_reward = tf.math.reduce_sum(rewards)
-        batch_reward = sum_reward/len(self.buffer.buffer)
+        batch_reward = sum_reward/self.buffer.get_size()
 
         return batch_reward, loss_value
