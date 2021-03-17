@@ -39,6 +39,47 @@ class DqnNetwork(keras.Model):
         return y
 
 
+class DuellingDqnNetwork(keras.Model):
+    """
+    Builds the Q-network as a keras model.
+    """
+
+    def __init__(self, model_param):
+        super(DuellingDqnNetwork, self).__init__()
+        self.model_params = model_param
+        num_inputs = model_param["num_inputs"]
+        num_outputs = model_param["num_outputs"]
+        num_hidden_1 = model_param["num_neurons"][0]
+        num_hidden_2 = model_param["num_neurons"][1]
+        af = model_param["af"]
+
+        input_layer = layers.Input(shape=(num_inputs,))
+
+        dense_layer_1 = layers.Dense(num_hidden_1, activation=af)(input_layer)
+        dense_layer_2 = layers.Dense(num_hidden_2, activation=af)(dense_layer_1)
+
+        value_layer, advantage_layer = layers.Lambda(lambda w: tf.split(w, 2, 1))(dense_layer_2)
+
+        value_layer = layers.Dense(1)(value_layer)
+        advantage_layer = layers.Dense(num_outputs)(advantage_layer)
+
+        reduce_mean_layer = layers.Lambda(lambda w: tf.reduce_mean(w, axis=1, keepdims=True))
+
+        output_layer = layers.Add()([value_layer, layers.Subtract()([advantage_layer, reduce_mean_layer(advantage_layer)])])
+
+        self.model = keras.Model(inputs=input_layer,
+                                 outputs=output_layer,
+                                 name="DDQN_basic")
+
+        keras.utils.plot_model(self.model, show_shapes=True, show_layer_names=True)
+
+    @tf.function
+    def call(self, inputs: tf.Tensor):
+        """ Returns the output of the model given an input. """
+        y = tf.cast(self.model(inputs), dtype=tf.dtypes.float32)
+        return y
+
+
 class DqnAgent(keras.models.Model):
 
     def __init__(self, model, training_param, model_param, buffer):

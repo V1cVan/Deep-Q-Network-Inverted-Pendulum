@@ -138,19 +138,20 @@ if __name__ == "__main__":
     MAX_TIMESTEPS = 1000
     MAX_EPISODES = 30000
     BUFFER_SIZE = 1000000
-    BATCH_SIZE = 32#32
+    BATCH_SIZE = 32
     EPSILON_MAX = 1.0
     EPSILON_MIN = 0.1
-    DECAY_RATE = 0.999995#0.999998
-    LEARN_RATE = 0.001
-    MODEL_UPDATE_RATE = 50#50
+    DECAY_RATE = 0.999995   # Epsilon decay rate per training step taken
+    MODEL_UPDATE_RATE = 50  # How many simulation steps are taken before the network weights are updated
     TARGET_UPDATE_RATE = 1000*MODEL_UPDATE_RATE
     CLIP_GRADIENTS = True
     CLIP_NORM = 2
     STANDARDISE_RETURNS = False
+    LEARN_RATE = 0.0005
     OPTIMISER = keras.optimizers.Adam(learning_rate=LEARN_RATE)
     LOSS_FUNC = tf.losses.Huber()
-    USE_PER = True
+    USE_PER = True          # Toggle to sample according to priority instead of uniformly
+    USE_DUELLING = False    # Enable duelling network architecture
 
     # Model parameters
     NUM_INPUTS = env.observation_space.shape[0]
@@ -176,7 +177,8 @@ if __name__ == "__main__":
         "standardise_returns": STANDARDISE_RETURNS,
         "clip_gradients": CLIP_GRADIENTS,
         "clip_norm": CLIP_NORM,
-        "use_per": USE_PER
+        "use_per": USE_PER,
+        "use_dueling": USE_DUELLING
     }
     model_param = {
         "seed": SEED,
@@ -199,7 +201,11 @@ if __name__ == "__main__":
         buffer = TrainingBuffer(max_mem_size=BUFFER_SIZE,
                                 batch_size=BATCH_SIZE)
 
-    DQN_model = DqnNetwork(model_param)
+    if USE_DUELLING:
+        DQN_model = DuellingDqnNetwork(model_param)
+    else:
+        DQN_model = DqnNetwork(model_param)
+
     DQN_agent = DqnAgent(DQN_model, training_param, model_param, buffer)
 
     # Train
