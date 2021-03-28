@@ -84,7 +84,7 @@ class Main(object):
             episode += 1
 
             # Log details
-            if episode % 50 == 0:
+            if episode % 5 == 0:
                 template = "Running reward: {:.2f} at Episode {}. Loss: {:.2f}. Epsilon: {:.2f}."
                 if trained == True:
                     print(template.format(running_reward, episode, loss_list[-1], mean_epsilon_list[-1]))
@@ -124,13 +124,13 @@ if __name__ == "__main__":
     MAX_TIMESTEPS = 1000
     MAX_EPISODES = 30000
     BUFFER_SIZE = 10000
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
     EPSILON_MAX = 1.0
     EPSILON_MIN = 0.1
     DECAY_RATE = 0.99994#0.999997   # Epsilon decay rate per training step taken
-    MODEL_UPDATE_RATE = 1  # How many simulation steps are taken before the network weights are updated
-    TARGET_UPDATE_RATE = 1000*MODEL_UPDATE_RATE
-    CLIP_GRADIENTS = False
+    MODEL_UPDATE_RATE = 5  # How many simulation steps are taken before the network weights are updated
+    TARGET_UPDATE_RATE = 100000*MODEL_UPDATE_RATE
+    CLIP_GRADIENTS = True
     CLIP_NORM = 2
     STANDARDISE_RETURNS = False
     LEARN_RATE = 0.0008

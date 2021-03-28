@@ -193,7 +193,7 @@ class DqnAgent(keras.models.Model):
         self.buffer.update(idxs, td_error)
         return batch_reward, loss
 
-    @tf.function
+    #@tf.function
     def run_tape(self,
                  states: tf.Tensor,
                  actions: tf.Tensor,
