@@ -3,9 +3,13 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 import numpy as np
+import random
 from matplotlib import pyplot as plt
 tf.keras.backend.set_floatx('float64')
 import os
+tf.random.set_seed(42)
+np.random.seed(42)
+random.seed(42)
 
 class DqnNetwork(keras.Model):
     """
@@ -109,7 +113,7 @@ class DqnAgent(keras.models.Model):
         if evaluation:  # (if not training)
             self.epsilon = 0
             return self.epsilon
-        elif not self.buffer.is_buffer_min_size():  # (if buffer isnt full)
+        elif not self.buffer.is_buffer_min_size() :  # (if buffer isnt full)
             self.epsilon = 1
             return self.epsilon
         else:
@@ -166,10 +170,9 @@ class DqnAgent(keras.models.Model):
         """ Training step. """
         # Sample mini-batch from memory
         if self.training_param["use_per"]:
-            # TODO Finish PER
             states, actions, rewards, next_states, done, idxs, is_weight = self.buffer.get_training_samples()
             one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
-            batch_reward, loss = self.run_tape(
+            batch_reward, loss, td_error = self.run_tape(
                 states=states,
                 actions=one_hot_actions,
                 rewards=rewards,
@@ -180,14 +183,14 @@ class DqnAgent(keras.models.Model):
         else:
             states, actions, rewards, next_states, done = self.buffer.get_training_samples()
             one_hot_actions = tf.keras.utils.to_categorical(actions, 2, dtype=np.float32)
-            batch_reward, loss = self.run_tape(
+            batch_reward, loss, td_error = self.run_tape(
                 states=states,
                 actions=one_hot_actions,
                 rewards=rewards,
                 next_states=next_states,
                 done=done
             )
-
+        self.buffer.update(idxs, td_error)
         return batch_reward, loss
 
     @tf.function
@@ -204,7 +207,7 @@ class DqnAgent(keras.models.Model):
         target_Q = self.DQN_target(next_states)
         target_output = rewards + (ones - done) * (self.gamma * tf.reduce_max(target_Q, axis=1))
 
-        # Testing the standardisation of expected returns - Showed significant performance on another repo.
+        # Testing the standardisation of expected returns - Showed significant performance in another repo.
         if self.training_param["standardise_returns"]:
             eps = np.finfo(np.float32).eps.item()
             target_output = target_output - tf.math.reduce_mean(target_output) / (
@@ -216,8 +219,8 @@ class DqnAgent(keras.models.Model):
             predicted_output = tf.reduce_sum(tf.multiply(predicted_Q, actions), axis=1)
 
 
-            error = target_output - predicted_output
-            loss_value = tf.reduce_mean(tf.square(error))
+            td_error = target_output - predicted_output
+            loss_value = tf.reduce_mean(tf.square(td_error))
             if is_weight is not None:
                 loss_value = tf.reduce_mean(loss_value * is_weight)
 
@@ -234,4 +237,4 @@ class DqnAgent(keras.models.Model):
         sum_reward = tf.math.reduce_sum(rewards)
         batch_reward = sum_reward/self.buffer.get_size()
 
-        return batch_reward, loss_value
+        return batch_reward, loss_value, td_error

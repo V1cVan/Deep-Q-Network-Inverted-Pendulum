@@ -3,11 +3,7 @@ os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # specify which GPU(s) to be used
 
 import gym
-import numpy as np
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-
 tf.config.experimental.set_visible_devices([], "GPU")
 
 from Policies import *
@@ -94,20 +90,10 @@ class Main(object):
                     print(template.format(running_reward, episode, loss_list[-1], mean_epsilon_list[-1]))
                     trained == False
 
-            if running_reward >= 300 or episode == self.agent.training_param["max_num_episodes"]:
+            if running_reward == 350 or episode == self.agent.training_param["max_num_episodes"]:
                 print("Solved at episode {}!".format(episode))
                 self.agent.DQN_model.save_weights(self.agent.DQN_model.model_params["weights_file_loc"])
-
-                # # Sum rewards and losses during training:
-                # plt.figure(1)
-                # plt.plot(np.arange(episode), rewards_history, '.-r')
-                # plt.plot(np.arange(episode), mean_loss_list, '.-b')  ## Veginning nan loss is from mean above. Not training.
-                #
-                # # Plot of epsilon evolution during training:
-                # plt.figure(2)
-                # plt.plot(np.arange(len(mean_epsilon_list)),mean_epsilon_list, '.-g')
-                # plt.show()
-                break # break the while (episode loop)
+                break
 
     def runSimulation(self, simulated_timesteps):
         """ For running the simulation after training """
@@ -137,21 +123,21 @@ if __name__ == "__main__":
     GAMMA = 0.99
     MAX_TIMESTEPS = 1000
     MAX_EPISODES = 30000
-    BUFFER_SIZE = 1000000
-    BATCH_SIZE = 32
+    BUFFER_SIZE = 10000
+    BATCH_SIZE = 64
     EPSILON_MAX = 1.0
     EPSILON_MIN = 0.1
-    DECAY_RATE = 0.999995   # Epsilon decay rate per training step taken
-    MODEL_UPDATE_RATE = 50  # How many simulation steps are taken before the network weights are updated
+    DECAY_RATE = 0.99994#0.999997   # Epsilon decay rate per training step taken
+    MODEL_UPDATE_RATE = 1  # How many simulation steps are taken before the network weights are updated
     TARGET_UPDATE_RATE = 1000*MODEL_UPDATE_RATE
-    CLIP_GRADIENTS = True
+    CLIP_GRADIENTS = False
     CLIP_NORM = 2
     STANDARDISE_RETURNS = False
-    LEARN_RATE = 0.0005
+    LEARN_RATE = 0.0008
     OPTIMISER = keras.optimizers.Adam(learning_rate=LEARN_RATE)
     LOSS_FUNC = tf.losses.Huber()
     USE_PER = True          # Toggle to sample according to priority instead of uniformly
-    USE_DUELLING = False    # Enable duelling network architecture
+    USE_DUELLING = True     # Enable duelling network architecture
 
     # Model parameters
     NUM_INPUTS = env.observation_space.shape[0]
@@ -192,6 +178,7 @@ if __name__ == "__main__":
     env.seed(training_param["seed"])
     tf.random.set_seed(training_param["seed"])
     np.random.seed(training_param["seed"])
+    random.seed(training_param["seed"])
 
     # Create buffer object
     if USE_PER:

@@ -5,6 +5,12 @@ import random
 from collections import deque
 import tensorflow as tf
 
+tf.random.set_seed(42)
+np.random.seed(42)
+random.seed(42)
+
+np.seterr(all='raise')
+
 class TrainingBuffer(object):
     """
     The training buffer is used to store experiences that are then sampled from uniformly to facilitate
@@ -42,15 +48,16 @@ class TrainingBuffer(object):
 
 
 class PerTrainingBuffer(object):  # stored as ( s, a, r, s_ ) in SumTree
-    e = 0.01
-    a = 0.75  # Priority scale: a=0:random, a=1:completely based on priority
-    beta = 0.3
-    beta_increment_per_sampling = 0.0005
+
 
     def __init__(self, buffer_size, batch_size):
         self.tree = SumTree(buffer_size)
         self.capacity = buffer_size
         self.batch_size = batch_size
+        self.e = 0.01  # Small constant to ensure that the sample has some non-zero probability of being drawn
+        self.a = 0.75  # Priority scale: a=0:random, a=1:completely based on priority
+        self.beta = 0.3  # Prioritisation factor annealed to 1 as training continues (importance sampling corrections matter more at the end of training)
+        self.beta_increment_per_sampling = 0.0005
 
     def _get_priority(self, error):
         return (np.abs(error) + self.e) ** self.a
@@ -65,7 +72,7 @@ class PerTrainingBuffer(object):  # stored as ( s, a, r, s_ ) in SumTree
         segment = self.tree.total() / self.batch_size
         priorities = []
 
-        self.beta = np.min([1., self.beta + self.beta_increment_per_sampling])
+        self.beta = np.min([1.0, self.beta + self.beta_increment_per_sampling])
 
         for i in range(self.batch_size):
             a = segment * i
@@ -80,7 +87,6 @@ class PerTrainingBuffer(object):  # stored as ( s, a, r, s_ ) in SumTree
         sampling_probabilities = priorities / self.tree.total()
         is_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.beta)
         is_weight /= is_weight.max()
-        is_weight = tf.squeeze(tf.convert_to_tensor(is_weight, dtype=np.float32))
 
         states = tf.squeeze(tf.convert_to_tensor([each[0] for each in batch], dtype=np.float32))
         actions = tf.squeeze(tf.convert_to_tensor(np.array([each[1] for each in batch], dtype=np.float32)))
@@ -88,11 +94,12 @@ class PerTrainingBuffer(object):  # stored as ( s, a, r, s_ ) in SumTree
         next_states = tf.squeeze(tf.convert_to_tensor(np.array([each[3] for each in batch], dtype=np.float32)))
         done = tf.cast([each[4] for each in batch], dtype=tf.float32)
 
-        return states, actions, rewards, next_states, done, idxs, is_weight
+        return states, actions, rewards, next_states, done, idxs, tf.squeeze(tf.convert_to_tensor(is_weight, dtype=np.float32))
 
     def update(self, idx, error):
         p = self._get_priority(error)
-        self.tree.update(idx, p)
+        for idx, p in zip(idx, p):
+            self.tree.update(idx, p)
 
     def is_buffer_min_size(self):
         if self.tree.n_entries < self.batch_size:
