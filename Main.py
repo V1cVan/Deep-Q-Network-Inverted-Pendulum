@@ -57,6 +57,7 @@ class Main(object):
                 self.agent.add_experience((state, action, reward, next_state, done))
                 state = next_state
 
+                # TODO add update step to the PER
                 if self.buffer.is_buffer_min_size():
                     model_update_counter += 1
                     if model_update_counter % training_param["target_update_rate"] == 0:

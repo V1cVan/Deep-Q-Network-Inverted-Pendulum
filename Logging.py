@@ -84,6 +84,7 @@ class PerTrainingBuffer(object):  # stored as ( s, a, r, s_ ) in SumTree
             batch.append(data)
             idxs.append(idx)
 
+        # TODO update sampling probabilities /self.tree.root
         sampling_probabilities = priorities / self.tree.total()
         is_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.beta)
         is_weight /= is_weight.max()
